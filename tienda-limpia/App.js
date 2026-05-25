@@ -40,12 +40,24 @@ const obtenerImagenProducto = (id) => {
 };
 
 const obtenerCategoria = (nombre) => {
-  const n = nombre.toLowerCase();
-  if (n.includes('laptop') || n.includes('tablet') || n.includes('smartphone')) return 'Dispositivos';
-  if (n.includes('ssd') || n.includes('ram')) return 'Componentes';
-  if (n.includes('silla')) return 'Mobiliario';
-  if (n.includes('wifi') || n.includes('impresora') || n.includes('router')) return 'Red/Oficina';
+  const n = text => text.toLowerCase();
+  const lowerNombre = n(nombre);
+  if (lowerNombre.includes('laptop') || lowerNombre.includes('tablet') || lowerNombre.includes('smartphone')) return 'Dispositivos';
+  if (lowerNombre.includes('ssd') || lowerNombre.includes('ram')) return 'Componentes';
+  if (lowerNombre.includes('silla')) return 'Mobiliario';
+  if (lowerNombre.includes('wifi') || lowerNombre.includes('impresora') || lowerNombre.includes('router')) return 'Red/Oficina';
   return 'Accesorios';
+};
+
+const formatearPrecio = (valor) => {
+  if (valor === undefined || valor === null) return '0';
+  if (typeof valor === 'number') {
+    if (isNaN(valor)) return '0';
+    return valor.toLocaleString();
+  }
+  const num = Number(valor);
+  if (isNaN(num)) return String(valor);
+  return num.toLocaleString();
 };
 
 export default function App() {
@@ -56,63 +68,61 @@ export default function App() {
   const [cliente, setCliente] = useState('');
   const [correo, setCorreo] = useState('');
   const [proforma, setProforma] = useState(null);
-
   useEffect(() => {
+    setEstadoConexion('Intentando conectar...');
+
     const ws = new WebSocket('ws://177.7.42.180:3000');
 
+    const timeout = setTimeout(() => {
+      setEstadoConexion('Sin respuesta del servidor (10s)');
+    }, 10000);
+
     ws.onopen = () => {
-      console.log('Conectado al servidor');
-      setEstadoConexion('Conectado');
-      ws.send(
-        JSON.stringify({
-          tipo: 'CATALOGO',
-        })
-      );
+      clearTimeout(timeout);
+      setEstadoConexion('Conectado ✅');
+      ws.send(JSON.stringify({ tipo: 'CATALOGO' }));
     };
 
     ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      console.log('Mensaje recibido:', data);
+      try {
+        const data = JSON.parse(event.data);
 
-      switch (data.tipo) {
-        case 'BIENVENIDA':
-          console.log(data.mensaje);
-          break;
-
-        case 'CATALOGO_RESPONSE':
+        if (data.tipo === 'CATALOGO_RESPONSE') {
           setProductos(data.productos);
-          break;
-
-        case 'COMPRA_EXITOSA':
+          setEstadoConexion(`Conectado (${data.productos.length} productos)`);
+        } else if (data.tipo === 'COMPRA_EXITOSA') {
           setProforma(data);
           Alert.alert(
             'Compra Exitosa',
             'La proforma fue generada y enviada a su correo.'
           );
           setCarrito([]);
-          break;
-
-        case 'ERROR':
-          Alert.alert('Error', data.mensaje);
-          break;
-
-        default:
-          console.log('Mensaje desconocido');
+        } else if (data.tipo === 'ERROR') {
+          Alert.alert('Error del Servidor', data.mensaje);
+        }
+      } catch (e) {
+        setEstadoConexion('Error al procesar respuesta');
       }
     };
 
     ws.onerror = (error) => {
-      console.log(error);
-      setEstadoConexion('Error de conexión');
+      clearTimeout(timeout);
+      setEstadoConexion('Error de conexión al servidor');
+      Alert.alert(
+        'Error de Conexión',
+        'No se pudo conectar al servidor.\n\n¿El servidor está encendido?'
+      );
     };
 
-    ws.onclose = () => {
-      setEstadoConexion('Desconectado');
+    ws.onclose = (event) => {
+      clearTimeout(timeout);
+      setEstadoConexion('Desconectado (Código: ' + event.code + ')');
     };
 
     setSocket(ws);
 
     return () => {
+      clearTimeout(timeout);
       ws.close();
     };
   }, []);
@@ -159,12 +169,27 @@ export default function App() {
       return;
     }
 
+    // Agrupar los productos por ID para calcular la cantidad de cada uno
+    const productosAgrupados = {};
+    carrito.forEach((item) => {
+      if (productosAgrupados[item.id]) {
+        productosAgrupados[item.id].cantidad += 1;
+      } else {
+        productosAgrupados[item.id] = {
+          id: item.id,
+          cantidad: 1,
+        };
+      }
+    });
+
+    const productosCompra = Object.values(productosAgrupados);
+
     socket.send(
       JSON.stringify({
         tipo: 'COMPRA',
         cliente,
         correo,
-        productos: carrito,
+        productos: productosCompra,
       })
     );
   };
@@ -176,7 +201,7 @@ export default function App() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1 }}
       >
-        <ScrollView 
+        <ScrollView
           style={styles.container}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
@@ -190,7 +215,7 @@ export default function App() {
             <View style={[
               styles.badgeConexion,
               estadoConexion === 'Conectado' ? styles.badgeConectado :
-              estadoConexion === 'Conectando...' ? styles.badgeConectando : styles.badgeDesconectado
+                estadoConexion === 'Conectando...' ? styles.badgeConectando : styles.badgeDesconectado
             ]}>
               <View style={[
                 styles.puntoConexion,
@@ -249,12 +274,12 @@ export default function App() {
               const categoria = obtenerCategoria(item.nombre);
               return (
                 <View style={styles.card}>
-                  <Image 
-                    source={{ uri: imagen }} 
-                    style={styles.imagenProducto} 
+                  <Image
+                    source={{ uri: imagen }}
+                    style={styles.imagenProducto}
                     resizeMode="cover"
                   />
-                  
+
                   <View style={styles.infoProducto}>
                     <View style={styles.tagCategoriaContainer}>
                       <Text style={styles.tagCategoria}>{categoria}</Text>
@@ -263,7 +288,7 @@ export default function App() {
                       {item.nombre}
                     </Text>
                     <Text style={styles.precio}>
-                      ${item.precio.toLocaleString()}
+                      ${formatearPrecio(item.precio)}
                     </Text>
                   </View>
 
@@ -290,10 +315,10 @@ export default function App() {
                 </View>
               )}
             </View>
-            
+
             {carrito.length > 0 && (
-              <TouchableOpacity 
-                style={styles.botonVaciar} 
+              <TouchableOpacity
+                style={styles.botonVaciar}
                 onPress={() => setCarrito([])}
                 activeOpacity={0.6}
               >
@@ -313,12 +338,12 @@ export default function App() {
               const imagen = obtenerImagenProducto(item.id);
               return (
                 <View key={index} style={styles.itemCarrito}>
-                  <Image 
-                    source={{ uri: imagen }} 
-                    style={styles.imagenMini} 
+                  <Image
+                    source={{ uri: imagen }}
+                    style={styles.imagenMini}
                     resizeMode="cover"
                   />
-                  
+
                   <View style={styles.infoCarrito}>
                     <Text style={styles.nombreMini} numberOfLines={1}>
                       {item.nombre}
@@ -345,19 +370,19 @@ export default function App() {
             <View style={styles.tarjetaResumen}>
               <View style={styles.filaResumen}>
                 <Text style={styles.textoTotalEtiqueta}>Subtotal</Text>
-                <Text style={styles.textoTotalValor}>${calcularTotal().toLocaleString()}</Text>
+                <Text style={styles.textoTotalValor}>${formatearPrecio(calcularTotal())}</Text>
               </View>
-              
+
               <View style={styles.filaResumen}>
                 <Text style={styles.textoTotalEtiqueta}>Envío</Text>
                 <Text style={styles.textoTotalValorGratis}>Gratis</Text>
               </View>
-              
+
               <View style={styles.divisor} />
-              
+
               <View style={styles.filaTotal}>
                 <Text style={styles.textoTotalPrincipal}>Total a Pagar</Text>
-                <Text style={styles.valorTotalPrincipal}>${calcularTotal().toLocaleString()}</Text>
+                <Text style={styles.valorTotalPrincipal}>${formatearPrecio(calcularTotal())}</Text>
               </View>
 
               <TouchableOpacity
@@ -380,9 +405,9 @@ export default function App() {
                 <Ionicons name="receipt-outline" size={26} color="#4f46e5" />
                 <Text style={styles.tituloTicket}>Proforma Digital</Text>
               </View>
-              
+
               <View style={styles.divisorTicket} />
-              
+
               <View style={styles.filaTicket}>
                 <Text style={styles.etiquetaTicket}>Cliente</Text>
                 <Text style={styles.valorTicket}>{proforma.cliente}</Text>
@@ -396,10 +421,10 @@ export default function App() {
               <View style={styles.filaTicket}>
                 <Text style={styles.etiquetaTicket}>Monto Total</Text>
                 <Text style={[styles.valorTicket, { fontWeight: '700', color: '#10b981' }]}>
-                  ${proforma.total.toLocaleString()}
+                  ${formatearPrecio(proforma.total)}
                 </Text>
               </View>
-              
+
               <View style={styles.divisorTicket} />
 
               <View style={styles.pdfContainer}>
